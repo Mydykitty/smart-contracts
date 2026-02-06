@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import fs from "fs";
 
 async function main() {
+    // Ethers 直连 JSON-RPC
   const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
   const signer = await provider.getSigner(0);
 
@@ -24,7 +25,7 @@ async function main() {
 
   const token = await TestTokenFactory.deploy();
   await token.waitForDeployment();
-  const tokenAddress = await token.getAddress();
+   const tokenAddress = await token.getAddress();
 
   console.log("TestToken deployed at:", tokenAddress);
 

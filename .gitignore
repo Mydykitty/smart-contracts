@@ -1,0 +1,12 @@
+/minichain
+.out
+.vscode
+.idea
+.fleet
+bin
+output
+.DS_Store
+/report.json
+/coverage.out
+/checkstyle.xml
+/doc/volume

@@ -31,21 +31,25 @@ contract MiniDex {
         uint ethAmount
     );
 
-    event OrderFilled(
+    event OrderPartiallyFilled(
         uint indexed orderId,
         address indexed maker,
-        address indexed taker
+        address indexed taker,
+        uint tokenFilled,
+        uint ethFilled
     );
+
+    event OrderFilled(uint indexed orderId, address indexed maker);
 
     event OrderCancelled(uint indexed orderId, address indexed trader);
 
     // ================= 订单 =================
     struct Order {
-        address trader; // 挂单人（maker）
-        uint tokenAmount; // token 数量
-        uint ethAmount; // eth 数量
-        bool isBuy; // true = 买单，false = 卖单
-        bool filled; // 是否已成交 / 撤单
+        address trader; // maker
+        uint remainingToken; // 剩余 token
+        uint remainingEth; // 剩余 eth
+        bool isBuy;
+        bool filled;
     }
 
     Order[] public orders;
@@ -81,94 +85,88 @@ contract MiniDex {
     }
 
     // ================= 挂单 =================
-    // ⚠️ 不锁资产，只是报价
     function placeOrder(uint tokenAmount, uint ethAmount, bool isBuy) external {
         require(tokenAmount > 0 && ethAmount > 0, "Invalid amount");
 
         orders.push(
             Order({
                 trader: msg.sender,
-                tokenAmount: tokenAmount,
-                ethAmount: ethAmount,
+                remainingToken: tokenAmount,
+                remainingEth: ethAmount,
                 isBuy: isBuy,
                 filled: false
             })
         );
 
-        uint orderId = orders.length - 1;
-
-        emit OrderPlaced(orderId, msg.sender, isBuy, tokenAmount, ethAmount);
+        emit OrderPlaced(
+            orders.length - 1,
+            msg.sender,
+            isBuy,
+            tokenAmount,
+            ethAmount
+        );
     }
 
-    // ================= 成交 =================
-    function fillOrder(uint orderId) external {
+    // ================= 部分成交 =================
+    function fillOrder(uint orderId, uint tokenAmount) external {
         require(orderId < orders.length, "Invalid order");
 
         Order storage order = orders[orderId];
-        require(!order.filled, "Order filled");
+        require(!order.filled, "Order finished");
         require(order.trader != msg.sender, "Self trade");
+        require(tokenAmount > 0, "Zero fill");
 
-        if (order.isBuy) {
-            /**
-             * 买单：
-             * - maker（挂单人）用 ETH 买 Token
-             * - taker（吃单人）卖 Token
-             */
-
-            // taker 必须有 Token
-            require(
-                tokenBalance[msg.sender] >= order.tokenAmount,
-                "Not enough token"
-            );
-
-            // maker 必须有 ETH
-            require(
-                ethBalance[order.trader] >= order.ethAmount,
-                "Buyer has no ETH"
-            );
-
-            // Token -> 买家
-            tokenBalance[msg.sender] -= order.tokenAmount;
-            tokenBalance[order.trader] += order.tokenAmount;
-
-            // ETH -> 卖家
-            ethBalance[order.trader] -= order.ethAmount;
-            ethBalance[msg.sender] += order.ethAmount;
-        } else {
-            /**
-             * 卖单：
-             * - maker（挂单人）卖 Token
-             * - taker（吃单人）用 ETH 买 Token
-             */
-
-            // maker 必须有 Token
-            require(
-                tokenBalance[order.trader] >= order.tokenAmount,
-                "Seller has no token"
-            );
-
-            // taker 必须有 ETH
-            require(
-                ethBalance[msg.sender] >= order.ethAmount,
-                "Not enough ETH"
-            );
-
-            // ETH -> 卖家
-            ethBalance[msg.sender] -= order.ethAmount;
-            ethBalance[order.trader] += order.ethAmount;
-
-            // Token -> 买家
-            tokenBalance[order.trader] -= order.tokenAmount;
-            tokenBalance[msg.sender] += order.tokenAmount;
+        // 不能吃超过剩余量
+        if (tokenAmount > order.remainingToken) {
+            tokenAmount = order.remainingToken;
         }
 
-        order.filled = true;
+        // 按比例算 ETH
+        uint ethAmount = (order.remainingEth * tokenAmount) /
+            order.remainingToken;
 
-        emit OrderFilled(
+        if (order.isBuy) {
+            // maker 用 ETH 买 token
+            require(ethBalance[order.trader] >= ethAmount, "Maker no ETH");
+            require(tokenBalance[msg.sender] >= tokenAmount, "Taker no token");
+
+            tokenBalance[msg.sender] -= tokenAmount;
+            tokenBalance[order.trader] += tokenAmount;
+
+            ethBalance[order.trader] -= ethAmount;
+            ethBalance[msg.sender] += ethAmount;
+        } else {
+            // maker 用 token 卖 ETH
+            require(
+                tokenBalance[order.trader] >= tokenAmount,
+                "Maker no token"
+            );
+            require(ethBalance[msg.sender] >= ethAmount, "Taker no ETH");
+
+            ethBalance[msg.sender] -= ethAmount;
+            ethBalance[order.trader] += ethAmount;
+
+            tokenBalance[order.trader] -= tokenAmount;
+            tokenBalance[msg.sender] += tokenAmount;
+        }
+
+        // 更新剩余
+        order.remainingToken -= tokenAmount;
+        order.remainingEth -= ethAmount;
+
+        emit OrderPartiallyFilled(
             orderId,
-            order.trader, // maker
-            msg.sender // taker
+            order.trader,
+            msg.sender,
+            tokenAmount,
+            ethAmount
         );
+
+        // 是否完全成交
+        if (order.remainingToken == 0) {
+            order.filled = true;
+            emit OrderFilled(orderId, order.trader);
+        }
     }
 
     // ================= 撤单 =================

@@ -16,6 +16,8 @@ npx hardhat node
 
 terminal2
 npx hardhat run scripts/deploy.mjs --network localhost
+修改TestToken和MiniDex的合约地址
+
 npx hardhat run scripts/play.mjs --network localhost
 
 1. 安装 Prettier 和 Solidity 插件

@@ -33,6 +33,45 @@ async function main() {
   const dex = new ethers.Contract(MINIDEX, dexAbi, alice);
   const token = new ethers.Contract(TOKEN, tokenAbi, alice);
 
+  // ===== 加事件监听（关键）=====
+  dex.on("OrderPlaced", (orderId, trader, isBuy, tokenAmount, ethAmount) => {
+    console.log(
+      "[Event] OrderPlaced",
+      "id =",
+      orderId.toString(),
+      "trader =",
+      trader,
+      "isBuy =",
+      isBuy,
+      "token =",
+      ethers.formatEther(tokenAmount),
+      "eth =",
+      ethers.formatEther(ethAmount),
+    );
+  });
+
+  dex.on("OrderFilled", (orderId, maker, taker) => {
+    console.log(
+      "[Event] OrderFilled",
+      "id =",
+      orderId.toString(),
+      "maker =",
+      maker,
+      "taker =",
+      taker,
+    );
+  });
+
+  dex.on("OrderCancelled", (orderId, trader) => {
+    console.log(
+      "[Event] OrderCancelled",
+      "id =",
+      orderId.toString(),
+      "trader =",
+      trader,
+    );
+  });
+
   // ===== 1. Alice 存 ETH 和 Token =====
   await dex.depositETH({ value: ethers.parseEther("10") });
   console.log("Alice deposited 10 ETH");

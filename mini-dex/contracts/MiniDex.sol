@@ -22,13 +22,30 @@ contract MiniDex {
     mapping(address => uint) public ethBalance;
     mapping(address => uint) public tokenBalance;
 
+    // ================= Events =================
+    event OrderPlaced(
+        uint indexed orderId,
+        address indexed trader,
+        bool isBuy,
+        uint tokenAmount,
+        uint ethAmount
+    );
+
+    event OrderFilled(
+        uint indexed orderId,
+        address indexed maker,
+        address indexed taker
+    );
+
+    event OrderCancelled(uint indexed orderId, address indexed trader);
+
     // ================= 订单 =================
     struct Order {
-        address trader; // 挂单人
+        address trader; // 挂单人（maker）
         uint tokenAmount; // token 数量
         uint ethAmount; // eth 数量
         bool isBuy; // true = 买单，false = 卖单
-        bool filled; // 是否已成交 / 撤销
+        bool filled; // 是否已成交 / 撤单
     }
 
     Order[] public orders;
@@ -64,7 +81,7 @@ contract MiniDex {
     }
 
     // ================= 挂单 =================
-    // ⚠️ 注意：不锁任何资产，只是报价
+    // ⚠️ 不锁资产，只是报价
     function placeOrder(uint tokenAmount, uint ethAmount, bool isBuy) external {
         require(tokenAmount > 0 && ethAmount > 0, "Invalid amount");
 
@@ -77,10 +94,14 @@ contract MiniDex {
                 filled: false
             })
         );
+
+        uint orderId = orders.length - 1;
+
+        emit OrderPlaced(orderId, msg.sender, isBuy, tokenAmount, ethAmount);
     }
 
     // ================= 成交 =================
-    function fillOrder(uint orderId) external payable {
+    function fillOrder(uint orderId) external {
         require(orderId < orders.length, "Invalid order");
 
         Order storage order = orders[orderId];
@@ -90,17 +111,17 @@ contract MiniDex {
         if (order.isBuy) {
             /**
              * 买单：
-             * - 挂单人想用 ETH 买 Token
-             * - 吃单人是卖 Token 的人
+             * - maker（挂单人）用 ETH 买 Token
+             * - taker（吃单人）卖 Token
              */
 
-            // 吃单人必须现场付 Token
+            // taker 必须有 Token
             require(
                 tokenBalance[msg.sender] >= order.tokenAmount,
                 "Not enough token"
             );
 
-            // 买家必须现场付 ETH
+            // maker 必须有 ETH
             require(
                 ethBalance[order.trader] >= order.ethAmount,
                 "Buyer has no ETH"
@@ -116,17 +137,17 @@ contract MiniDex {
         } else {
             /**
              * 卖单：
-             * - 挂单人想用 Token 换 ETH
-             * - 吃单人是买 Token 的人
+             * - maker（挂单人）卖 Token
+             * - taker（吃单人）用 ETH 买 Token
              */
 
-            // 卖家必须有 Token
+            // maker 必须有 Token
             require(
                 tokenBalance[order.trader] >= order.tokenAmount,
                 "Seller has no token"
             );
 
-            // 吃单人必须有 ETH
+            // taker 必须有 ETH
             require(
                 ethBalance[msg.sender] >= order.ethAmount,
                 "Not enough ETH"
@@ -142,6 +163,12 @@ contract MiniDex {
         }
 
         order.filled = true;
+
+        emit OrderFilled(
+            orderId,
+            order.trader, // maker
+            msg.sender // taker
+        );
     }
 
     // ================= 撤单 =================
@@ -153,6 +180,8 @@ contract MiniDex {
         require(!order.filled, "Already filled");
 
         order.filled = true;
+
+        emit OrderCancelled(orderId, msg.sender);
     }
 
     // ================= 查询 =================

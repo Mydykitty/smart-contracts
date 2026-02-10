@@ -7,6 +7,7 @@ interface IERC20 {
         address to,
         uint amount
     ) external returns (bool);
+
     function transfer(address to, uint amount) external returns (bool);
 }
 
@@ -17,27 +18,26 @@ contract MiniDex {
         token = IERC20(_token);
     }
 
-    // 用户在交易所里的余额
+    // ================= 内部余额 =================
     mapping(address => uint) public ethBalance;
     mapping(address => uint) public tokenBalance;
 
+    // ================= 订单 =================
     struct Order {
-        address trader;
-        uint tokenAmount;
-        uint ethAmount;
-        bool isBuy; // true = 买单, false = 卖单
-        bool filled;
+        address trader; // 挂单人
+        uint tokenAmount; // token 数量
+        uint ethAmount; // eth 数量
+        bool isBuy; // true = 买单，false = 卖单
+        bool filled; // 是否已成交 / 撤销
     }
 
     Order[] public orders;
 
     // ================= 充值 =================
-
     function depositETH() external payable {
         ethBalance[msg.sender] += msg.value;
     }
 
-    // 允许直接向合约转 ETH 也计入余额
     receive() external payable {
         ethBalance[msg.sender] += msg.value;
     }
@@ -51,7 +51,6 @@ contract MiniDex {
     }
 
     // ================= 提现 =================
-
     function withdrawETH(uint amount) external {
         require(ethBalance[msg.sender] >= amount, "Not enough ETH");
         ethBalance[msg.sender] -= amount;
@@ -65,56 +64,84 @@ contract MiniDex {
     }
 
     // ================= 挂单 =================
-
+    // ⚠️ 注意：不锁任何资产，只是报价
     function placeOrder(uint tokenAmount, uint ethAmount, bool isBuy) external {
-        if (isBuy) {
-            require(ethBalance[msg.sender] >= ethAmount, "Not enough ETH");
-            ethBalance[msg.sender] -= ethAmount; // 🔒 锁 ETH
-        } else {
-            require(
-                tokenBalance[msg.sender] >= tokenAmount,
-                "Not enough Token"
-            );
-            tokenBalance[msg.sender] -= tokenAmount; // 🔒 锁 Token
-        }
+        require(tokenAmount > 0 && ethAmount > 0, "Invalid amount");
 
-        orders.push(Order(msg.sender, tokenAmount, ethAmount, isBuy, false));
+        orders.push(
+            Order({
+                trader: msg.sender,
+                tokenAmount: tokenAmount,
+                ethAmount: ethAmount,
+                isBuy: isBuy,
+                filled: false
+            })
+        );
     }
 
-    // ================= 撮合成交 =================
-
-    function fillOrder(uint orderId) external {
+    // ================= 成交 =================
+    function fillOrder(uint orderId) external payable {
         require(orderId < orders.length, "Invalid order");
 
         Order storage order = orders[orderId];
-        require(!order.filled, "Already filled");
+        require(!order.filled, "Order filled");
         require(order.trader != msg.sender, "Self trade");
 
         if (order.isBuy) {
-            // 买单：买家用 ETH 买 token（ETH 已锁）
-            require(tokenBalance[msg.sender] >= order.tokenAmount, "No token");
+            /**
+             * 买单：
+             * - 挂单人想用 ETH 买 Token
+             * - 吃单人是卖 Token 的人
+             */
 
+            // 吃单人必须现场付 Token
+            require(
+                tokenBalance[msg.sender] >= order.tokenAmount,
+                "Not enough token"
+            );
+
+            // 买家必须现场付 ETH
+            require(
+                ethBalance[order.trader] >= order.ethAmount,
+                "Buyer has no ETH"
+            );
+
+            // Token -> 买家
             tokenBalance[msg.sender] -= order.tokenAmount;
             tokenBalance[order.trader] += order.tokenAmount;
 
+            // ETH -> 卖家
+            ethBalance[order.trader] -= order.ethAmount;
             ethBalance[msg.sender] += order.ethAmount;
         } else {
-            // 卖单：卖家用 token 卖 ETH（token 已锁）
-            require(ethBalance[msg.sender] >= order.ethAmount, "No ETH");
+            /**
+             * 卖单：
+             * - 挂单人想用 Token 换 ETH
+             * - 吃单人是买 Token 的人
+             */
 
+            // 卖家必须有 Token
+            require(
+                tokenBalance[order.trader] >= order.tokenAmount,
+                "Seller has no token"
+            );
+
+            // 吃单人必须有 ETH
+            require(
+                ethBalance[msg.sender] >= order.ethAmount,
+                "Not enough ETH"
+            );
+
+            // ETH -> 卖家
             ethBalance[msg.sender] -= order.ethAmount;
             ethBalance[order.trader] += order.ethAmount;
 
+            // Token -> 买家
+            tokenBalance[order.trader] -= order.tokenAmount;
             tokenBalance[msg.sender] += order.tokenAmount;
         }
 
         order.filled = true;
-    }
-
-    // ================= 查询 =================
-
-    function getOrdersCount() external view returns (uint) {
-        return orders.length;
     }
 
     // ================= 撤单 =================
@@ -123,18 +150,13 @@ contract MiniDex {
 
         Order storage order = orders[orderId];
         require(order.trader == msg.sender, "Not your order");
-        require(!order.filled, "Order already filled");
+        require(!order.filled, "Already filled");
 
-        // 标记为已成交（防止重复操作）
         order.filled = true;
+    }
 
-        // 返还锁定资产
-        if (order.isBuy) {
-            // 买单：返还锁定的 ETH
-            ethBalance[msg.sender] += order.ethAmount;
-        } else {
-            // 卖单：返还锁定的 Token
-            tokenBalance[msg.sender] += order.tokenAmount;
-        }
+    // ================= 查询 =================
+    function getOrdersCount() external view returns (uint) {
+        return orders.length;
     }
 }
